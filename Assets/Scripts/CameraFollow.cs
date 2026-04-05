@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 
 public class CameraFollow : MonoBehaviour
 {
@@ -14,8 +14,8 @@ public class CameraFollow : MonoBehaviour
     public float minPitch = -40f;
     public float maxPitch = 70f;
 
-    float yaw;   // Horizontal rotation
-    float pitch; // Vertical rotation
+    Vector3 currentForward; 
+    float pitch; 
 
     [Header("Follow")]
     public float followSmooth = 8f;
@@ -25,56 +25,61 @@ public class CameraFollow : MonoBehaviour
     public float minDistance = 0.5f;
     public LayerMask wallMask;
 
+    [Header("Gravity Transition")]
+    public float gravityRotationSmooth = 6f;
+
     Vector3 currentOffset;
-    Vector3 gravityUp;
+    Vector3 targetGravityUp;
+    Vector3 currentGravityUp;
 
     void Start()
     {
-        gravityUp = Vector3.up;        // default
+        targetGravityUp = Vector3.up;        
+        currentGravityUp = Vector3.up;
         currentOffset = new Vector3(0, height, -distance);
 
-        // Initialize yaw/pitch from current camera rotation
-        Vector3 angles = transform.eulerAngles;
-        yaw = angles.y;
-        pitch = angles.x;
+        pitch = transform.eulerAngles.x;
+        if (pitch > 180f) pitch -= 360f;
+        
+        currentForward = Vector3.ProjectOnPlane(transform.forward, currentGravityUp).normalized;
+        if (currentForward.sqrMagnitude < 0.001f) 
+            currentForward = Vector3.forward;
     }
 
     void LateUpdate()
     {
         if (!target) return;
 
-        // ==============================
-        // 1) GET MOUSE INPUT
-        // ==============================
+        // Smoothly rotate the gravity up vector for smooth transition
+        currentGravityUp = Vector3.Slerp(currentGravityUp, targetGravityUp, Time.deltaTime * gravityRotationSmooth).normalized;
+
         float mouseX = Input.GetAxis("Mouse X") * mouseSensitivityX * Time.deltaTime;
         float mouseY = Input.GetAxis("Mouse Y") * mouseSensitivityY * Time.deltaTime;
 
-        yaw += mouseX;
-        pitch -= mouseY;
+        if (mouseX != 0f)
+        {
+            currentForward = Quaternion.AngleAxis(mouseX, currentGravityUp) * currentForward;
+        }
 
+        pitch -= mouseY;
         pitch = Mathf.Clamp(pitch, minPitch, maxPitch);
 
-        // ==============================
-        // 2) BUILD CAMERA ROTATION USING GRAVITY UP DIRECTION
-        // ==============================
-        // Horizontal rotation around gravity
-        Quaternion yawRot = Quaternion.AngleAxis(yaw, gravityUp);
+        // Keep currentForward orthogonal to the transitioning gravity up
+        currentForward = Vector3.ProjectOnPlane(currentForward, currentGravityUp).normalized;
+        if (currentForward.sqrMagnitude < 0.001f)
+        {
+            currentForward = Vector3.ProjectOnPlane(target.forward, currentGravityUp).normalized;
+            if (currentForward.sqrMagnitude < 0.001f)
+                currentForward = Vector3.right; // Ultimate fallback
+        }
 
-        // Stable right axis AFTER yaw rotation
-        Vector3 stableRight = yawRot * Vector3.right;
-
-        // Vertical rotation around stable axis
-        Quaternion pitchRot = Quaternion.AngleAxis(pitch, stableRight);
-
-        // Final rotation
-        Quaternion rot = pitchRot * yawRot;
-
+        // Build base rotation
+        Quaternion yawRot = Quaternion.LookRotation(currentForward, currentGravityUp);
+        Quaternion pitchRotLocal = Quaternion.Euler(pitch, 0, 0);
+        Quaternion rot = yawRot * pitchRotLocal;
 
         Vector3 desiredOffset = rot * new Vector3(0, height, -distance);
 
-        // ==============================
-        // 3) COLLISION CHECK
-        // ==============================
         Vector3 targetPos = target.position;
         Vector3 idealPos = targetPos + desiredOffset;
 
@@ -99,9 +104,6 @@ public class CameraFollow : MonoBehaviour
             );
         }
 
-        // ==============================
-        // 4) APPLY POSITION + LOOK AT PLAYER
-        // ==============================
         Vector3 finalPos = targetPos + currentOffset;
 
         transform.position = Vector3.Lerp(
@@ -110,57 +112,30 @@ public class CameraFollow : MonoBehaviour
             Time.deltaTime * followSmooth
         );
 
-        transform.rotation = Quaternion.LookRotation(
-            (target.position - transform.position).normalized,
-            gravityUp
-        );
+        // Final look rotation aiming exactly at the target but aligned firmly with currentGravityUp
+        Vector3 lookDir = (target.position - transform.position).normalized;
+        if (lookDir.sqrMagnitude > 0.001f)
+        {
+            transform.rotation = Quaternion.LookRotation(lookDir, currentGravityUp);
+        }
     }
 
-
-    // =====================================================
-    // GRAVITY CHANGE — ROTATE CAMERA SYSTEM
-    // =====================================================
     public void RotateCameraToGravity(Vector3 newGravityDir)
     {
-        // 1) Update gravity up direction
-        gravityUp = -newGravityDir.normalized;
-
-        // 2) Build a flat forward direction (projected on new up)
-        Vector3 flatForward = Vector3.ProjectOnPlane(transform.forward, gravityUp).normalized;
-
-        if (flatForward.sqrMagnitude < 0.001f)
-            flatForward = Vector3.ProjectOnPlane(target.forward, gravityUp).normalized;
-
-        // 3) Create a corrected rotation -- NO TILT
-        Quaternion correctedRot = Quaternion.LookRotation(flatForward, gravityUp);
-
-        // Apply rotation instantly
-        transform.rotation = correctedRot;
-
-        // 4) Extract yaw and pitch from corrected rotation
-        Vector3 e = correctedRot.eulerAngles;
-
-        yaw = e.y;
-
-        // Recompute pitch by measuring angle between forward and its projected flat version
-        Vector3 projected = Vector3.ProjectOnPlane(correctedRot * Vector3.forward, gravityUp);
-        pitch = Vector3.SignedAngle(projected, correctedRot * Vector3.forward, correctedRot * Vector3.right);
-
-        // Clamp pitch again
-        pitch = Mathf.Clamp(pitch, minPitch, maxPitch);
+        targetGravityUp = -newGravityDir.normalized;
+        // Do not touch currentGravityUp or currentForward here, letting LateUpdate() transition them smoothly.
     }
-
 
     public void ResetCameraState()
     {
-        yaw = 0f;
+        currentForward = Vector3.forward;
         pitch = 0f;
 
-        gravityUp = Vector3.up;
+        targetGravityUp = Vector3.up;
+        currentGravityUp = Vector3.up;
 
         transform.rotation = Quaternion.identity;
 
         currentOffset = new Vector3(0, height, -distance);
     }
-
 }

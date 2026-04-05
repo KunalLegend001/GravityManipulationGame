@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 
 [RequireComponent(typeof(Rigidbody))]
 public class PlayerController : MonoBehaviour
@@ -141,8 +141,8 @@ public class PlayerController : MonoBehaviour
 
         if (pressed)
         {
-            selectedGravity = newDir;
-            ShowHologram(-newDir);   // place hologram opposite gravity
+            selectedGravity = SnapToCardinal(newDir);
+            ShowHologram(-selectedGravity);   // place hologram opposite gravity
         }
         else
         {
@@ -154,6 +154,27 @@ public class PlayerController : MonoBehaviour
             ApplyGravity(selectedGravity);
             HideHologram();
         }
+    }
+
+    Vector3 SnapToCardinal(Vector3 dir)
+    {
+        Vector3[] cardinals = new Vector3[] {
+            Vector3.up, Vector3.down, Vector3.left, Vector3.right, Vector3.forward, Vector3.back
+        };
+
+        Vector3 best = dir;
+        float maxDot = -1f;
+
+        foreach (var c in cardinals)
+        {
+            float d = Vector3.Dot(dir, c);
+            if (d > maxDot)
+            {
+                maxDot = d;
+                best = c;
+            }
+        }
+        return best;
     }
 
 
